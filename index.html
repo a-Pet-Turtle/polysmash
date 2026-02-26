@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Polysmash</title>
+<link rel="icon" type="image/png" href="icon.png">
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { overflow:hidden; background:#000; }
+#ui {
+  position:absolute; top:14px; left:16px; color:#fff;
+  font-family:'Courier New',monospace; font-size:15px; display:none;
+  text-shadow:0 0 8px rgba(0,255,180,0.6); letter-spacing:2px; line-height:2;
+}
+#staminaBar {
+  position:absolute; bottom:28px; left:50%; transform:translateX(-50%);
+  width:220px; height:8px; background:rgba(255,255,255,0.15);
+  border:1px solid rgba(255,255,255,0.25); border-radius:4px;
+  display:none; overflow:hidden;
+}
+#staminaFill { height:100%; width:100%; background:#00e5ff; border-radius:4px; }
+#staminaLabel {
+  position:absolute; bottom:40px; left:50%; transform:translateX(-50%);
+  font-family:'Courier New',monospace; font-size:11px; color:rgba(255,255,255,0.45);
+  letter-spacing:3px; display:none;
+}
+#timeLabel {
+  position:absolute; top:14px; left:50%; transform:translateX(-50%);
+  font-family:'Courier New',monospace; font-size:12px; color:rgba(255,255,255,0.5);
+  letter-spacing:3px; display:none;
+}
+#camToggle {
+  position:absolute; top:14px; right:16px; color:#00ffb4;
+  font-family:'Courier New',monospace; font-size:13px; display:none;
+  background:rgba(0,0,0,0.4); padding:6px 12px; border:1px solid rgba(0,255,180,0.3);
+  cursor:pointer; user-select:none; letter-spacing:2px;
+}
+#camToggle:hover { background:rgba(0,255,180,0.12); }
+#resumePrompt {
+  position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  color:#00ffb4; font-family:'Courier New',monospace; font-size:22px;
+  letter-spacing:0.3em; display:none; text-align:center;
+  animation:blink 1.2s step-end infinite; pointer-events:none;
+}
+#crosshair { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); width:20px; height:20px; display:none; pointer-events:none; }
+#crosshair::before,#crosshair::after { content:''; position:absolute; background:rgba(255,255,255,0.8); }
+#crosshair::before { width:2px; height:100%; left:50%; transform:translateX(-50%); }
+#crosshair::after  { width:100%; height:2px; top:50%; transform:translateY(-50%); }
+#titleCanvas { position:absolute; top:0; left:0; width:100%; height:100%; }
+#titleOverlay {
+  position:absolute; top:0; left:0; width:100%; height:100%;
+  display:flex; flex-direction:column; align-items:center; justify-content:center; pointer-events:none;
+}
+#titleText {
+  font-family:'Courier New',monospace; font-size:clamp(36px,8vw,90px);
+  font-weight:900; letter-spacing:0.15em; text-transform:uppercase;
+  color:transparent; -webkit-text-stroke:2px #00ffb4;
+  text-shadow:0 0 40px rgba(0,255,180,0.5),0 0 80px rgba(0,255,180,0.2);
+  animation:titlePulse 2.5s ease-in-out infinite; margin-bottom:12px;
+}
+#titleSub {
+  font-family:'Courier New',monospace; font-size:clamp(11px,2vw,18px);
+  letter-spacing:0.4em; color:rgba(255,255,255,0.5); text-transform:uppercase; margin-bottom:60px;
+}
+#clickPrompt {
+  font-family:'Courier New',monospace; font-size:clamp(13px,2vw,16px);
+  letter-spacing:0.3em; color:#00ffb4; text-transform:uppercase;
+  animation:blink 1.4s step-end infinite; cursor:pointer;
+  pointer-events:all; padding:12px 28px; border:1px solid rgba(0,255,180,0.4);
+}
+#clickPrompt:hover { background:rgba(0,255,180,0.08); }
+@keyframes titlePulse {
+  0%,100%{text-shadow:0 0 40px rgba(0,255,180,0.5),0 0 80px rgba(0,255,180,0.2)}
+  50%{text-shadow:0 0 60px rgba(0,255,180,0.9),0 0 120px rgba(0,255,180,0.4)}
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0.2} }
+#titleScreen { position:absolute; top:0; left:0; width:100%; height:100%; }
+#gameCanvas  { position:absolute; top:0; left:0; display:none; }
+</style>
+</head>
+<body>
+<div id="titleScreen">
+  <canvas id="titleCanvas"></canvas>
+  <div id="titleOverlay">
+    <div id="titleText">Polysmash</div>
+    <div id="titleSub">Ultimate Arena</div>
+    <div id="clickPrompt" onclick="startGame()">Click to Enter Chaos</div>
+  </div>
+</div>
+<canvas id="gameCanvas"></canvas>
+<div id="ui"></div>
+<div id="staminaLabel">STAMINA</div>
+<div id="staminaBar"><div id="staminaFill"></div></div>
+<div id="timeLabel"></div>
+<div id="camToggle" onclick="toggleCamera()">[V] 1st Person</div>
+<div id="resumePrompt">CLICK TO RESUME</div>
+<div id="crosshair"></div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.165/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.165/examples/jsm/"
+  }
+}
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+import { ShaderPass }      from 'three/addons/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+
+// ═══════════════════════════════════════════════
+// CEL-SHADING GLSL — injected via onBeforeCompile
+// ═══════════════════════════════════════════════
+// We patch MeshStandardMaterial's fragment shader to
+// quantize the diffuse lighting into 4 toon bands.
+function makeToonMaterial(params){
+  const mat = new THREE.MeshStandardMaterial(params);
+  mat.onBeforeCompile = shader => {
+    // Inject after the #include <lights_fragment_end>
+    shader.fragmentShader = shader.fragmentShader.replace(
+      '#include <dithering_fragment>',
+      `
+      // ── CEL QUANTIZE ──
+      // luminance of the accumulated direct light
+      float lum = dot(outgoingLight, vec3(0.299, 0.587, 0.114));
+      // 4-step toon bands: shadow / dark / mid / highlight
+      float band;
+      if      (lum < 0.10) band = 0.0;
+      else if (lum < 0.35) band = 0.30;
+      else if (lum < 0.65) band = 0.62;
+      else                  band = 1.00;
+      // Blend: mostly quantized, tiny smooth residual so it doesn't look too harsh
+      float blended = mix(band, lum, 0.18);
+      outgoingLight = outgoingLight * (lum > 0.001 ? blended/lum : 1.0);
+      #include <dithering_fragment>
+      `
+    );
+  };
+  return mat;
+}
+
+// ═══════════════════════════════════════════════
+// OUTLINE PASS  (depth + normal edge detection)
+// ═══════════════════════════════════════════════
+const OutlineShader = {
+  uniforms: {
+    tDiffuse:   { value: null },
+    tDepth:     { value: null },
+    uResolution:{ value: new THREE.Vector2(1,1) },
+    uNear:      { value: 0.1 },
+    uFar:       { value: 2000 },
+    uThickness: { value: 1.0 },
+    uDarkness:  { value: 0.92 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform sampler2D tDepth;
+    uniform vec2  uResolution;
+    uniform float uNear;
+    uniform float uFar;
+    uniform float uThickness;
+    uniform float uDarkness;
+    varying vec2 vUv;
+
+    float linearDepth(float d){
+      float ndc = d*2.0-1.0;
+      return (2.0*uNear*uFar)/(uFar+uNear - ndc*(uFar-uNear));
+    }
+
+    void main(){
+      vec2 px = uThickness / uResolution;
+      // Sample 3x3 neighbourhood depths
+      float d00 = linearDepth(texture2D(tDepth, vUv+vec2(-px.x,-px.y)).r);
+      float d10 = linearDepth(texture2D(tDepth, vUv+vec2( 0.0, -px.y)).r);
+      float d20 = linearDepth(texture2D(tDepth, vUv+vec2( px.x,-px.y)).r);
+      float d01 = linearDepth(texture2D(tDepth, vUv+vec2(-px.x, 0.0)).r);
+      float d21 = linearDepth(texture2D(tDepth, vUv+vec2( px.x, 0.0)).r);
+      float d02 = linearDepth(texture2D(tDepth, vUv+vec2(-px.x, px.y)).r);
+      float d12 = linearDepth(texture2D(tDepth, vUv+vec2( 0.0,  px.y)).r);
+      float d22 = linearDepth(texture2D(tDepth, vUv+vec2( px.x, px.y)).r);
+
+      // Sobel
+      float sobelX = -d00 + d20 - 2.0*d01 + 2.0*d21 - d02 + d22;
+      float sobelY = -d00 - 2.0*d10 - d20 + d02 + 2.0*d12 + d22;
+      float edge   = sqrt(sobelX*sobelX + sobelY*sobelY);
+
+      // Scale edge by scene depth so far objects don't over-outline
+      float centerDepth = linearDepth(texture2D(tDepth, vUv).r);
+      float depthScale  = clamp(centerDepth / 30.0, 0.3, 1.0);
+      edge = clamp(edge * 0.08 / depthScale, 0.0, 1.0);
+
+      vec4 color = texture2D(tDiffuse, vUv);
+      // Dark outline colour slightly tinted toward the scene color
+      vec3 outlineColor = mix(color.rgb * 0.15, vec3(0.05,0.04,0.06), 0.7);
+      color.rgb = mix(color.rgb, outlineColor, edge * uDarkness);
+      gl_FragColor = color;
+    }
+  `
+};
+
+// ═══════════════════════════════════════════════
+// COLOR GRADE PASS  (BotW warm painterly look)
+// ═══════════════════════════════════════════════
+const ColorGradeShader = {
+  uniforms: {
+    tDiffuse:    { value: null },
+    uSaturation: { value: 1.18 },  // slightly boosted
+    uContrast:   { value: 1.06 },
+    uWarmth:     { value: 0.04 },  // nudge toward warm amber
+    uVignette:   { value: 0.38 },
+  },
+  vertexShader: `
+    varying vec2 vUv;
+    void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }
+  `,
+  fragmentShader: `
+    uniform sampler2D tDiffuse;
+    uniform float uSaturation;
+    uniform float uContrast;
+    uniform float uWarmth;
+    uniform float uVignette;
+    varying vec2 vUv;
+
+    vec3 saturation(vec3 c, float s){
+      float lum = dot(c, vec3(0.299,0.587,0.114));
+      return mix(vec3(lum), c, s);
+    }
+
+    void main(){
+      vec4 tex = texture2D(tDiffuse, vUv);
+      vec3 c = tex.rgb;
+
+      // Contrast
+      c = (c - 0.5)*uContrast + 0.5;
+
+      // Saturation
+      c = saturation(c, uSaturation);
+
+      // Warmth — add a gentle amber tint
+      c.r = min(c.r + uWarmth * 0.6, 1.0);
+      c.g = min(c.g + uWarmth * 0.2, 1.0);
+
+      // Vignette
+      vec2 uv2 = vUv*2.0 - 1.0;
+      float vig = 1.0 - dot(uv2*vec2(0.7,0.9), uv2*vec2(0.7,0.9)) * uVignette;
+      c *= clamp(vig, 0.0, 1.0);
+
+      gl_FragColor = vec4(clamp(c,0.0,1.0), tex.a);
+    }
+  `
+};
+
+
+// ─────────────────────────────────────────────
+// TITLE SCREEN
+// ─────────────────────────────────────────────
+(function(){
+  const canvas = document.getElementById('titleCanvas');
+  const scene  = new THREE.Scene();
+  scene.background = new THREE.Color(0x050a0f);
+  scene.fog = new THREE.FogExp2(0x050a0f, 0.035);
+  const cam = new THREE.PerspectiveCamera(60, innerWidth/innerHeight, 0.1, 500);
+  cam.position.set(0,12,40); cam.lookAt(0,4,0);
+  const rdr = new THREE.WebGLRenderer({canvas, antialias:true});
+  rdr.setSize(innerWidth, innerHeight);
+  rdr.setPixelRatio(Math.min(devicePixelRatio,2));
+
+  scene.add(new THREE.HemisphereLight(0x0a1a2e,0x050a0f,0.6));
+  const teal = new THREE.PointLight(0x00ffb4,2,80); teal.position.set(0,20,10); scene.add(teal);
+  const pink = new THREE.PointLight(0xff2d6f,1.5,60); pink.position.set(-20,5,20); scene.add(pink);
+
+  const gGeo = new THREE.PlaneGeometry(200,200,40,40); gGeo.rotateX(-Math.PI/2);
+  const gPos = gGeo.attributes.position;
+  for(let i=0;i<gPos.count;i++){
+    const x=gPos.getX(i),z=gPos.getZ(i);
+    if(Math.abs(x)>1||Math.abs(z)>1) gPos.setY(i, Math.sin(x*0.15)*2+Math.cos(z*0.12)*2+(Math.random()-0.5)*1.5);
+  }
+  gGeo.computeVertexNormals();
+  scene.add(new THREE.Mesh(gGeo, new THREE.MeshStandardMaterial({color:0x0a1a2e,flatShading:true})));
+
+  const sc=[0x00ffb4,0xff2d6f,0x0066ff,0xffcc00,0xff6600], shards=[];
+  for(let i=0;i<30;i++){
+    const geo = Math.random()<0.5 ? new THREE.TetrahedronGeometry(Math.random()*1.2+0.4) : new THREE.OctahedronGeometry(Math.random()*1+0.3);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({color:sc[i%5],flatShading:true,emissive:sc[(i+2)%5],emissiveIntensity:0.3}));
+    mesh.position.set((Math.random()-0.5)*70, Math.random()*18+2, (Math.random()-0.5)*30-5);
+    mesh.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, Math.random()*Math.PI);
+    scene.add(mesh);
+    shards.push({mesh, vr:new THREE.Vector3((Math.random()-0.5)*0.5,(Math.random()-0.5)*0.5,(Math.random()-0.5)*0.5), baseY:mesh.position.y, phase:Math.random()*Math.PI*2});
+  }
+  for(let i=0;i<12;i++){
+    const h=Math.random()*15+8;
+    const m=new THREE.Mesh(new THREE.ConeGeometry(Math.random()*6+3,h,3), new THREE.MeshStandardMaterial({color:0x0d1f35,flatShading:true}));
+    m.position.set((Math.random()-0.5)*120, h/2-1, -(Math.random()*40+15)); scene.add(m);
+  }
+  const glm = new THREE.LineBasicMaterial({color:0x00ffb4,transparent:true,opacity:0.08});
+  for(let i=-10;i<=10;i++){
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(i*5,.05,-100),new THREE.Vector3(i*5,.05,100)]),glm));
+    scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(-100,.05,i*5),new THREE.Vector3(100,.05,i*5)]),glm));
+  }
+  let T=0, running=true;
+  function loop(){
+    if(!running) return;
+    requestAnimationFrame(loop); T+=0.016;
+    shards.forEach(s=>{ s.mesh.position.y=s.baseY+Math.sin(T*0.8+s.phase)*1.5; s.mesh.rotation.x+=s.vr.x*0.016; s.mesh.rotation.y+=s.vr.y*0.016; s.mesh.rotation.z+=s.vr.z*0.016; });
+    teal.position.x=Math.sin(T*0.4)*15; teal.position.z=Math.cos(T*0.3)*10+10;
+    pink.intensity=1.2+Math.sin(T*1.2)*0.5;
+    cam.position.x=Math.sin(T*0.1)*3; cam.position.y=12+Math.sin(T*0.15)*1; cam.lookAt(0,4,0);
+    rdr.render(scene,cam);
+  }
+  loop();
+  window._stopTitle = ()=>{ running=false; };
+  window.addEventListener('resize',()=>{ cam.aspect=innerWidth/innerHeight; cam.updateProjectionMatrix(); rdr.setSize(innerWidth,innerHeight); });
+})();
+
+
+// ─────────────────────────────────────────────
+// GAME
+// ─────────────────────────────────────────────
+let gameStarted=false, thirdPerson=false, _camCB=null;
+
+function startGame(){
+  document.getElementById('titleScreen').style.display='none';
+  document.getElementById('gameCanvas').style.display='block';
+  if(window._stopTitle) window._stopTitle();
+  initGame();
+}
+window.startGame=startGame;
+
+function toggleCamera(){
+  thirdPerson=!thirdPerson;
+  document.getElementById('camToggle').innerText=thirdPerson?'[V] 3rd Person':'[V] 1st Person';
+  if(_camCB) _camCB(thirdPerson);
+}
+window.toggleCamera=toggleCamera;
+
+function initGame(){
+  if(gameStarted) return;
+  gameStarted=true;
+
+  // ── RENDERER ──
+  const renderer = new THREE.WebGLRenderer({
+    canvas: document.getElementById('gameCanvas'),
+    antialias: true,
+    powerPreference: 'high-performance'
+  });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  // No toneMapping on renderer — we handle color grade in the final ShaderPass
+  renderer.toneMapping = THREE.NoToneMapping;
+
+  const scene  = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 2000);
+
+  // ── DEPTH RENDER TARGET for outlines ──
+  const depthRT = new THREE.WebGLRenderTarget(innerWidth, innerHeight);
+  depthRT.texture.format = THREE.RGBAFormat;
+  depthRT.texture.type   = THREE.UnsignedByteType;
+  const depthMat = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+
+  // ── POST-PROCESSING PIPELINE ──
+  // 1. RenderPass  → scene colors
+  // 2. BloomPass   → glow on emissive objects
+  // 3. OutlinePass → depth-based ink lines
+  // 4. ColorGrade  → BotW warmth + saturation + vignette
+  const composer = new EffectComposer(renderer);
+  composer.addPass(new RenderPass(scene, camera));
+
+  const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.55, 0.4, 0.78);
+  composer.addPass(bloom);
+
+  const outlinePass = new ShaderPass(OutlineShader);
+  outlinePass.uniforms.uResolution.value.set(innerWidth, innerHeight);
+  outlinePass.uniforms.uNear.value = camera.near;
+  outlinePass.uniforms.uFar.value  = camera.far;
+  composer.addPass(outlinePass);
+
+  const gradePass = new ShaderPass(ColorGradeShader);
+  gradePass.renderToScreen = true;
+  composer.addPass(gradePass);
+
+  // ── ENV MAP for reflective blade ──
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment()).texture;
+  pmrem.dispose();
+
+  // ── HUD ──
+  const ui             = document.getElementById('ui');
+  const crosshair      = document.getElementById('crosshair');
+  const resumePrompt   = document.getElementById('resumePrompt');
+  const camToggleEl    = document.getElementById('camToggle');
+  const staminaBarEl   = document.getElementById('staminaBar');
+  const staminaFillEl  = document.getElementById('staminaFill');
+  const staminaLabelEl = document.getElementById('staminaLabel');
+  const timeLabelEl    = document.getElementById('timeLabel');
+  let gameActive = false;
+
+  // ── DAY / NIGHT ──
+  let dayT = 0.12;
+  const DAY_SPEED = 0.004;
+  const skyKeys = [
+    {t:0.00, sky:new THREE.Color(0xff6633), fog:new THREE.Color(0xff7744)},
+    {t:0.15, sky:new THREE.Color(0x87ceeb), fog:new THREE.Color(0xadd8e6)},
+    {t:0.25, sky:new THREE.Color(0x5bc8f5), fog:new THREE.Color(0x8ec8e8)},
+    {t:0.45, sky:new THREE.Color(0xff8844), fog:new THREE.Color(0xff9955)},
+    {t:0.55, sky:new THREE.Color(0x1a1a3a), fog:new THREE.Color(0x1a1a2e)},
+    {t:0.85, sky:new THREE.Color(0x0a0a1f), fog:new THREE.Color(0x0a0a18)},
+    {t:1.00, sky:new THREE.Color(0xff6633), fog:new THREE.Color(0xff7744)},
+  ];
+  function skyAt(t){
+    let a=skyKeys[0], b=skyKeys[1];
+    for(let i=0;i<skyKeys.length-1;i++){
+      if(t>=skyKeys[i].t&&t<skyKeys[i+1].t){ a=skyKeys[i]; b=skyKeys[i+1]; break; }
+    }
+    const f = Math.min(1,(t-a.t)/(b.t-a.t));
+    return { sky:a.sky.clone().lerp(b.sky,f), fog:a.fog.clone().lerp(b.fog,f) };
+  }
+
+  // ── LIGHTING ──
+  const hemi = new THREE.HemisphereLight(0xffeedd, 0x446644, 1.0); scene.add(hemi);
+  const sun  = new THREE.DirectionalLight(0xfff5cc, 1.8);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(261,261); // 1048, 2048
+  sun.shadow.camera.near=1; sun.shadow.camera.far=400;
+  sun.shadow.camera.left=sun.shadow.camera.bottom=-130;
+  sun.shadow.camera.right=sun.shadow.camera.top=130;
+  sun.shadow.bias=-0.0005;
+  scene.add(sun);
+  const moon = new THREE.DirectionalLight(0x4477bb,0); moon.position.set(-100,150,-80); scene.add(moon);
+
+  // ── TERRAIN ──
+  const MAP_SIZE=150, HALF_MAP=MAP_SIZE/2-2;
+  function groundHeight(x,z){ return Math.sin(x*0.05)*4+Math.cos(z*0.05)*4; }
+  const groundGeo = new THREE.PlaneGeometry(MAP_SIZE,MAP_SIZE,80,80); groundGeo.rotateX(-Math.PI/2);
+  for(let i=0;i<groundGeo.attributes.position.count;i++){
+    const x=groundGeo.attributes.position.getX(i), z=groundGeo.attributes.position.getZ(i);
+    groundGeo.attributes.position.setY(i,groundHeight(x,z));
+  }
+  groundGeo.computeVertexNormals();
+  const ground = new THREE.Mesh(groundGeo, makeToonMaterial({color:0x3CB043,flatShading:true,roughness:0.9}));
+  ground.receiveShadow=true; scene.add(ground);
+
+  // ── CLOUDS ──
+  const cloudMat = new THREE.MeshStandardMaterial({color:0xffffff,flatShading:true,transparent:true,opacity:0.85,roughness:1,depthWrite:false});
+  const clouds=[];
+  for(let i=0;i<16;i++){
+    const grp=new THREE.Group();
+    for(let j=0;j<Math.floor(Math.random()*4)+3;j++){
+      const puff=new THREE.Mesh(new THREE.IcosahedronGeometry(Math.random()*3+2,0),cloudMat);
+      puff.position.set((Math.random()-0.5)*8,(Math.random()-0.5)*2,(Math.random()-0.5)*6);
+      grp.add(puff);
+    }
+    grp.position.set((Math.random()-0.5)*180, Math.random()*20+38, (Math.random()-0.5)*180);
+    scene.add(grp);
+    clouds.push({grp, speed:Math.random()*0.5+0.2});
+  }
+
+  // ── PLATFORMS ──
+  const platforms=[];
+  for(let i=0;i<8;i++){
+    const x=(Math.random()-0.5)*100,z=(Math.random()-0.5)*100,base=groundHeight(x,z);
+    const hW=3,hH=1,hD=3;
+    const mesh=new THREE.Mesh(new THREE.BoxGeometry(hW*2,hH*2,hD*2),makeToonMaterial({color:0x999999,flatShading:true}));
+    mesh.position.set(x,base+10,z); mesh.castShadow=true; mesh.receiveShadow=true; scene.add(mesh);
+    platforms.push({minX:x-hW,maxX:x+hW,minZ:z-hD,maxZ:z+hD,bottom:base+10-hH,top:base+10+hH});
+  }
+
+  // ── HOUSES ──
+  const houses=[];
+  for(let i=0;i<5;i++){
+    const x=(Math.random()-0.5)*100,z=(Math.random()-0.5)*100,base=groundHeight(x,z);
+    const bm=new THREE.Mesh(new THREE.BoxGeometry(8,6,8),makeToonMaterial({color:0xffcc99,flatShading:true}));
+    bm.position.set(x,base+3,z); bm.castShadow=true; bm.receiveShadow=true;
+    const rm=new THREE.Mesh(new THREE.ConeGeometry(6,4,4),makeToonMaterial({color:0xcc3300,flatShading:true}));
+    rm.position.set(x,base+8,z); rm.rotation.y=Math.PI/4; rm.castShadow=true;
+    scene.add(bm); scene.add(rm);
+    houses.push({minX:x-4,maxX:x+4,minZ:z-4,maxZ:z+4,bottom:base,top:base+6});
+  }
+
+  // ── WALLS ──
+  [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dx,dz])=>{
+    const w=new THREE.Mesh(new THREE.BoxGeometry(dx?4:MAP_SIZE+8,40,dz?4:MAP_SIZE+8),makeToonMaterial({color:0x445566,flatShading:true}));
+    w.position.set(dx*MAP_SIZE/2,40/2-15,dz*MAP_SIZE/2); w.receiveShadow=true; scene.add(w);
+  });
+
+  // ── REFLECTIVE BLADE ──
+  const bladeMat = new THREE.MeshPhysicalMaterial({
+    color:0xd0e8ff, metalness:1.0, roughness:0.04,
+    envMapIntensity:3.0, clearcoat:1.0, clearcoatRoughness:0.04,
+  });
+
+  function buildSword(){
+    const g=new THREE.Group();
+    const blade=new THREE.Mesh(new THREE.BoxGeometry(0.14,1.9,0.08),bladeMat);
+    blade.position.y=0.95; blade.castShadow=true;
+    const guard=new THREE.Mesh(new THREE.BoxGeometry(0.55,0.13,0.13),new THREE.MeshStandardMaterial({color:0xffaa00,metalness:0.6,roughness:0.3}));
+    const handle=new THREE.Mesh(new THREE.BoxGeometry(0.11,0.42,0.11),new THREE.MeshStandardMaterial({color:0x663300,roughness:0.9}));
+    handle.position.y=-0.21;
+    const pommel=new THREE.Mesh(new THREE.SphereGeometry(0.1,6,6),new THREE.MeshStandardMaterial({color:0xffaa00,metalness:0.7,roughness:0.3}));
+    pommel.position.y=-0.45;
+    g.add(blade); g.add(guard); g.add(handle); g.add(pommel);
+    return g;
+  }
+
+  // ── PLAYER ──
+  const PLAYER_HEIGHT=3, PLAYER_RADIUS=0.5;
+  const player=new THREE.Object3D(); scene.add(player); player.position.set(0,20,0);
+
+  const playerBody=new THREE.Group();
+  const bodyM=new THREE.Mesh(new THREE.BoxGeometry(1,2,0.6),   makeToonMaterial({color:0x3366ff,flatShading:true}));
+  const headM=new THREE.Mesh(new THREE.BoxGeometry(0.8,0.8,0.8),makeToonMaterial({color:0xffcc99,flatShading:true}));
+  headM.position.y=1.5;
+  const armR=new THREE.Mesh(new THREE.BoxGeometry(0.25,1.0,0.25),makeToonMaterial({color:0x3366ff,flatShading:true}));
+  armR.position.set(0.7,-0.1,0); armR.rotation.z=-0.3;
+  const bodySword=buildSword();
+  bodySword.position.set(1.1,-0.2,0.1); bodySword.rotation.set(0.2,0,-0.4); bodySword.scale.setScalar(0.85);
+  [bodyM,headM,armR,bodySword].forEach(m=>{ m.castShadow=true; playerBody.add(m); });
+  scene.add(playerBody); playerBody.visible=false;
+
+  const camPivot=new THREE.Object3D(); player.add(camPivot); camPivot.add(camera);
+  function applyCamera(){ camera.position.set(0,thirdPerson?3:0,thirdPerson?9:0); camera.rotation.set(0,0,0); }
+  applyCamera();
+  _camCB=tp=>{ thirdPerson=tp; applyCamera(); };
+
+  const fpSword=buildSword();
+  fpSword.position.set(0.55,-0.6,-0.9);
+  camera.add(fpSword);
+
+  let swingAngle=0, swingVel=0, swingTarget=0, bodySwordSwingT=0;
+
+  // ── STAMINA ──
+  const STAMINA_MAX=100,SPRINT_DRAIN=40,STAMINA_REGEN=20;
+  let stamina=STAMINA_MAX;
+  const BASE_SPEED=12,SPRINT_SPEED=22;
+
+  let yaw=0,pitch=0,velocityY=0,canJump=true;
+  let hp=100,xp=0,kills=0;
+  const gravity=-35,jumpPower=24;
+  const keys={};
+
+  document.addEventListener('keydown',e=>{ keys[e.code]=true; if(e.code==='KeyV') toggleCamera(); });
+  document.addEventListener('keyup',  e=>keys[e.code]=false);
+  renderer.domElement.addEventListener('click',()=>{ if(!document.pointerLockElement) renderer.domElement.requestPointerLock(); });
+  renderer.domElement.requestPointerLock();
+  document.addEventListener('pointerlockchange',()=>{
+    const locked=document.pointerLockElement===renderer.domElement;
+    [ui,camToggleEl,crosshair,staminaBarEl,staminaLabelEl,timeLabelEl].forEach(el=>el.style.display=locked?'block':'none');
+    resumePrompt.style.display=locked?'none':'block';
+    gameActive=locked;
+  });
+  document.addEventListener('mousemove',e=>{
+    if(!gameActive) return;
+    yaw-=e.movementX*0.002; pitch-=e.movementY*0.002;
+    pitch=Math.max(-Math.PI/2,Math.min(Math.PI/2,pitch));
+  });
+
+  // ── ATTACK ──
+  document.addEventListener('mousedown',()=>{
+    if(!gameActive) return;
+    swingTarget=-1.4; bodySwordSwingT=1.0;
+    monsters.slice().forEach(m=>{
+      if(m.mesh.position.distanceTo(player.position)<(m.mini?5:7)){
+        spawnDeathParticles(m.mesh.position.clone(),m.color);
+        scene.remove(m.mesh);
+        if(m.mini){xp+=10;kills++;}else{xp+=50;kills++;}
+        monsters.splice(monsters.indexOf(m),1);
+        if(kills>0&&kills%5===0) spawnBoss();
+      }
+    });
+  });
+
+  // ── PARTICLES ──
+  const particles=[];
+  function spawnDeathParticles(pos,color){
+    for(let i=0;i<20;i++){
+      const mesh=new THREE.Mesh(
+        new THREE.TetrahedronGeometry(Math.random()*0.35+0.1),
+        new THREE.MeshStandardMaterial({color,flatShading:true,emissive:color,emissiveIntensity:0.7,transparent:true})
+      );
+      mesh.position.copy(pos); scene.add(mesh);
+      particles.push({mesh, vel:new THREE.Vector3((Math.random()-0.5)*14,Math.random()*10+4,(Math.random()-0.5)*14), life:1.0, rx:(Math.random()-0.5)*6, rz:(Math.random()-0.5)*6});
+    }
+  }
+
+  // ── HEALTH PICKUPS ──
+  const pickups=[];
+  const pickupMat=new THREE.MeshStandardMaterial({color:0x00ff55,flatShading:true,emissive:0x00ff44,emissiveIntensity:1.4});
+  function spawnPickup(){
+    const x=(Math.random()-0.5)*100,z=(Math.random()-0.5)*100;
+    const mesh=new THREE.Mesh(new THREE.OctahedronGeometry(0.75),pickupMat);
+    mesh.add(new THREE.PointLight(0x00ff44,1.5,8));
+    const y=groundHeight(x,z)+1.2; mesh.position.set(x,y,z); scene.add(mesh);
+    pickups.push({mesh,baseY:y});
+  }
+  for(let i=0;i<8;i++) spawnPickup();
+
+  // ── MONSTERS ──
+  const monsters=[];
+  let lastSpawn=0;
+  const mBladeMat =new THREE.MeshStandardMaterial({color:0xff2200,flatShading:true,emissive:0xff0000,emissiveIntensity:0.5});
+  const mGuardMat =new THREE.MeshStandardMaterial({color:0x885500,flatShading:true});
+  const mHandleMat=new THREE.MeshStandardMaterial({color:0x442200,flatShading:true});
+
+  function makeMonsterSword(parent,scale){
+    const grp=new THREE.Group();
+    const blade=new THREE.Mesh(new THREE.BoxGeometry(0.13*scale,1.5*scale,0.13*scale),mBladeMat);
+    blade.position.y=0.75*scale;
+    const guard=new THREE.Mesh(new THREE.BoxGeometry(0.55*scale,0.13*scale,0.13*scale),mGuardMat);
+    const handle=new THREE.Mesh(new THREE.BoxGeometry(0.1*scale,0.45*scale,0.1*scale),mHandleMat);
+    handle.position.y=-0.22*scale;
+    grp.add(blade);grp.add(guard);grp.add(handle);
+    grp.position.set(scale*1.1,scale*0.3,0); grp.rotation.z=-0.4;
+    parent.add(grp); return grp;
+  }
+
+  function spawnMonster(){
+    const grp=new THREE.Group();
+    const body=new THREE.Mesh(new THREE.DodecahedronGeometry(1.5),makeToonMaterial({color:0xe91e63,flatShading:true,emissive:0x880033,emissiveIntensity:0.35}));
+    body.castShadow=true; grp.add(body);
+    grp.add(new THREE.PointLight(0xff0066,0.8,6));
+    const sw=makeMonsterSword(grp,1);
+    const x=(Math.random()-0.5)*100,z=(Math.random()-0.5)*100;
+    grp.position.set(x,groundHeight(x,z)+1.5,z); scene.add(grp);
+    monsters.push({mesh:grp,sword:sw,mini:true,swingT:0,color:0xe91e63});
+  }
+  function spawnBoss(){
+    const grp=new THREE.Group();
+    const body=new THREE.Mesh(new THREE.IcosahedronGeometry(3),makeToonMaterial({color:0x2200cc,flatShading:true,emissive:0x1100aa,emissiveIntensity:0.4}));
+    body.castShadow=true; grp.add(body);
+    grp.add(new THREE.PointLight(0x4400ff,2,14));
+    const sw=makeMonsterSword(grp,2);
+    const x=(Math.random()-0.5)*100,z=(Math.random()-0.5)*100;
+    grp.position.set(x,groundHeight(x,z)+3,z); scene.add(grp);
+    monsters.push({mesh:grp,sword:sw,mini:false,swingT:0,color:0x2200cc});
+  }
+  for(let i=0;i<6;i++) spawnMonster();
+
+  // ── COLLISION ──
+  function getSurfaceY(px,pz,cy){
+    let s=groundHeight(px,pz);
+    platforms.forEach(p=>{if(px>=p.minX&&px<=p.maxX&&pz>=p.minZ&&pz<=p.maxZ&&cy-PLAYER_HEIGHT<=p.top+1&&cy-PLAYER_HEIGHT>=p.bottom-0.5)s=Math.max(s,p.top);});
+    houses.forEach(h=>{if(px>=h.minX&&px<=h.maxX&&pz>=h.minZ&&pz<=h.maxZ&&cy-PLAYER_HEIGHT<=h.top+1&&cy-PLAYER_HEIGHT>=h.bottom-0.5)s=Math.max(s,h.top);});
+    return s;
+  }
+  function resolveH(px,pz,py){
+    let nx=px,nz=pz;
+    const push=b=>{
+      if(py-PLAYER_HEIGHT<b.top&&py>b.bottom&&nx>=b.minX-PLAYER_RADIUS&&nx<=b.maxX+PLAYER_RADIUS&&nz>=b.minZ-PLAYER_RADIUS&&nz<=b.maxZ+PLAYER_RADIUS){
+        const oL=(b.maxX+PLAYER_RADIUS)-nx,oR=nx-(b.minX-PLAYER_RADIUS);
+        const oF=(b.maxZ+PLAYER_RADIUS)-nz,oB=nz-(b.minZ-PLAYER_RADIUS);
+        if(Math.min(oL,oR)<Math.min(oF,oB))nx+=oR<oL?-oR:oL;else nz+=oB<oF?-oB:oF;
+      }
+    };
+    platforms.forEach(push);houses.forEach(push);return{nx,nz};
+  }
+
+  // ── GAME LOOP ──
+  const clock=new THREE.Clock();
+  let pickupT=0,dead=false;
+
+  function animate(){
+    requestAnimationFrame(animate);
+    const delta=Math.min(clock.getDelta(),0.05);
+
+    // ── DAY/NIGHT ──
+    dayT=(dayT+DAY_SPEED*delta)%1;
+    const sky=skyAt(dayT);
+    scene.background=sky.sky;
+    scene.fog=new THREE.FogExp2(sky.fog,0.028);
+    const sunAngle=(dayT-0.25)*Math.PI*2;
+    sun.position.set(Math.cos(sunAngle)*200,Math.sin(sunAngle)*200,80);
+    const sunStr=Math.max(0,Math.sin(dayT*Math.PI));
+    sun.intensity=sunStr*2.0; moon.intensity=Math.max(0,Math.sin((dayT-0.5)*Math.PI))*0.6;
+    hemi.intensity=0.4+sunStr*0.5;
+    bloom.strength=sunStr>0.2?0.45:0.9;
+    // Warm up the grade pass at dawn/dusk
+    gradePass.uniforms.uWarmth.value = 0.02 + (1-sunStr)*0.06;
+    const hour=Math.floor(((dayT+0.25)%1)*24);
+    timeLabelEl.innerText=`${hour%12||12}:00 ${hour<12?'AM':'PM'}`;
+
+    // ── CLOUDS ──
+    clouds.forEach(c=>{ c.grp.position.x+=c.speed*delta; if(c.grp.position.x>100)c.grp.position.x=-100; });
+
+    // ── RENDER DEPTH for outline pass ──
+    // Swap scene materials to depth-only, render to depthRT
+    scene.overrideMaterial=depthMat;
+    renderer.setRenderTarget(depthRT);
+    renderer.render(scene,camera);
+    renderer.setRenderTarget(null);
+    scene.overrideMaterial=null;
+    outlinePass.uniforms.tDepth.value=depthRT.texture;
+
+    if(gameActive&&!dead){
+      pickupT+=delta;
+
+      // ── STAMINA ──
+      const sprinting=(keys['ShiftLeft']||keys['ShiftRight'])&&(keys['KeyW']||keys['KeyS']||keys['KeyA']||keys['KeyD']);
+      if(sprinting&&stamina>0)stamina=Math.max(0,stamina-SPRINT_DRAIN*delta);
+      else stamina=Math.min(STAMINA_MAX,stamina+STAMINA_REGEN*delta);
+      const speed=(sprinting&&stamina>0)?SPRINT_SPEED:BASE_SPEED;
+      const stPct=stamina/STAMINA_MAX;
+      staminaFillEl.style.width=(stPct*100)+'%';
+      staminaFillEl.style.background=stPct>0.4?'#00e5ff':stPct>0.15?'#ffcc00':'#ff4444';
+
+      // ── ORIENTATION ──
+      player.rotation.y=yaw;
+      if(thirdPerson)camPivot.rotation.x=pitch;else camera.rotation.x=pitch;
+      playerBody.visible=thirdPerson;
+      playerBody.position.set(player.position.x,player.position.y-PLAYER_HEIGHT+1,player.position.z);
+      playerBody.rotation.y=yaw;
+      fpSword.visible=!thirdPerson;
+
+      // ── SWORD SPRING ──
+      swingVel+=(-28*(swingAngle-swingTarget)-7*swingVel)*delta;
+      swingAngle+=swingVel*delta;
+      fpSword.rotation.x=swingAngle;
+      swingTarget*=Math.pow(0.01,delta);
+      if(bodySwordSwingT>0){bodySwordSwingT=Math.max(0,bodySwordSwingT-delta*5);bodySword.rotation.x=-bodySwordSwingT*1.4;}
+
+      // ── MOVEMENT ──
+      const fwd=new THREE.Vector3(0,0,-1).applyQuaternion(player.quaternion);fwd.y=0;fwd.normalize();
+      const rgt=new THREE.Vector3().crossVectors(fwd,new THREE.Vector3(0,1,0)).normalize();
+      const move=new THREE.Vector3();
+      if(keys['KeyW'])move.add(fwd);if(keys['KeyS'])move.sub(fwd);
+      if(keys['KeyA'])move.sub(rgt);if(keys['KeyD'])move.add(rgt);
+      if(move.length()>0){move.normalize();move.multiplyScalar(speed*delta);player.position.add(move);}
+      player.position.x=Math.max(-HALF_MAP,Math.min(HALF_MAP,player.position.x));
+      player.position.z=Math.max(-HALF_MAP,Math.min(HALF_MAP,player.position.z));
+      const{nx,nz}=resolveH(player.position.x,player.position.z,player.position.y);
+      player.position.x=nx;player.position.z=nz;
+
+      if(keys['Space']&&canJump){velocityY=jumpPower;canJump=false;}
+      velocityY+=gravity*delta;player.position.y+=velocityY*delta;
+      const surf=getSurfaceY(player.position.x,player.position.z,player.position.y);
+      if(player.position.y<=surf+PLAYER_HEIGHT){player.position.y=surf+PLAYER_HEIGHT;velocityY=0;canJump=true;}
+
+      // ── PICKUPS ──
+      for(let i=pickups.length-1;i>=0;i--){
+        const pu=pickups[i];
+        pu.mesh.position.y=pu.baseY+Math.sin(pickupT*2.5+i*1.3)*0.35;
+        pu.mesh.rotation.y+=delta*2;
+        if(pu.mesh.position.distanceTo(player.position)<2.5){
+          scene.remove(pu.mesh);pickups.splice(i,1);hp=Math.min(100,hp+30);setTimeout(spawnPickup,6000);
+        }
+      }
+
+      // ── MONSTERS ──
+      if(Date.now()-lastSpawn>=3000){spawnMonster();lastSpawn=Date.now();}
+      for(let i=monsters.length-1;i>=0;i--){
+        const m=monsters[i];
+        const dir=new THREE.Vector3().subVectors(player.position,m.mesh.position);dir.y=0;dir.normalize();
+        m.mesh.position.addScaledVector(dir,(m.mini?3.8:2.8)*delta);
+        m.mesh.rotation.y+=delta*1.8;m.swingT+=delta*3.5;
+        if(m.sword)m.sword.rotation.z=-0.4+Math.sin(m.swingT)*1.0;
+        m.mesh.position.y=groundHeight(m.mesh.position.x,m.mesh.position.z)+(m.mini?1.5:3);
+        if(m.mesh.position.distanceTo(player.position)<(m.mini?2.8:4.0))hp-=(m.mini?45:90)*delta;
+      }
+
+      // ── PARTICLES ──
+      for(let i=particles.length-1;i>=0;i--){
+        const p=particles[i];
+        p.life-=delta*1.5;p.vel.y-=18*delta;
+        p.mesh.position.addScaledVector(p.vel,delta);
+        p.mesh.rotation.x+=p.rx*delta;p.mesh.rotation.z+=p.rz*delta;
+        p.mesh.material.opacity=p.life;p.mesh.scale.setScalar(p.life);
+        if(p.life<=0){scene.remove(p.mesh);particles.splice(i,1);}
+      }
+
+      // ── HUD ──
+      const hpPct=Math.max(0,hp)/100;
+      const hpColor=hpPct>0.6?'#00ff88':hpPct>0.3?'#ffcc00':'#ff3333';
+      const sprintIcon=(sprinting&&stamina>0)?'<span style="color:#00e5ff;font-size:12px"> ⚡</span>':'';
+      ui.innerHTML=`<span style="color:${hpColor}">HP: ${Math.max(0,Math.floor(hp))}</span>&nbsp;|&nbsp;XP: ${xp}&nbsp;|&nbsp;Kills: ${kills}${sprintIcon}`;
+
+      if(hp<=0){
+        dead=true;
+        ui.innerHTML='<span style="color:#ff3333;font-size:20px;letter-spacing:3px;">☠ YOU DIED — Refresh to restart</span>';
+        document.exitPointerLock();
+      }
+    }
+
+    composer.render();
+  }
+  animate();
+
+  window.addEventListener('resize',()=>{
+    camera.aspect=innerWidth/innerHeight; camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth,innerHeight);
+    composer.setSize(innerWidth,innerHeight);
+    depthRT.setSize(innerWidth,innerHeight);
+    outlinePass.uniforms.uResolution.value.set(innerWidth,innerHeight);
+  });
+}
+</script>
+</body>
+</html>
